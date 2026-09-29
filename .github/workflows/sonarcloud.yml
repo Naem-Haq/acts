@@ -5,7 +5,7 @@ on:
     branches:
       - main
 
-  # Lets you manually rerun it from Actions without making a dummy commit
+  # Allows manual reruns from GitHub Actions
   workflow_dispatch:
 
 permissions:
@@ -16,22 +16,32 @@ jobs:
   sonar:
     name: SonarQube Cloud Analysis
     runs-on: ubuntu-latest
+    timeout-minutes: 180
 
     # Same ACTS environment used by the upstream CI
     container:
       image: ghcr.io/acts-project/ubuntu2604:90
 
     steps:
+      # ------------------------------------------------------------
+      # 1. Basic runner setup
+      # ------------------------------------------------------------
       - name: Install required packages
         run: |
           apt-get update
           apt-get install -y unzip
 
+      # ------------------------------------------------------------
+      # 2. Checkout full Git history for Sonar
+      # ------------------------------------------------------------
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
+      # ------------------------------------------------------------
+      # 3. Install ACTS dependencies
+      # ------------------------------------------------------------
       - name: Install ACTS dependencies
         uses: ./.github/actions/dependencies
         with:
@@ -39,6 +49,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           env_file: .env
 
+      # ------------------------------------------------------------
+      # 4. Configure coverage build
+      # ------------------------------------------------------------
       - name: Configure ACTS
         run: |
           CI/dependencies/run.sh .env \
@@ -48,11 +61,65 @@ jobs:
           test -f build/compile_commands.json
           ls -lh build/compile_commands.json
 
+      # ------------------------------------------------------------
+      # 5. Build coverage-instrumented ACTS code
+      # ------------------------------------------------------------
+      - name: Build ACTS
+        run: |
+          cmake --build build -j2
+
+      # ------------------------------------------------------------
+      # 6. Run ACTS unit tests
+      #    These generate the .gcda coverage execution data
+      # ------------------------------------------------------------
+      - name: Run unit tests
+        env:
+          CTEST_OUTPUT_ON_FAILURE: 1
+          ACTS_LOG_FAILURE_THRESHOLD: WARNING
+        run: |
+          CI/dependencies/run.sh .env \
+            ctest --test-dir build -j2 --label-exclude "slow"
+
+      # ------------------------------------------------------------
+      # 7. Convert gcov coverage into SonarQube XML
+      # ------------------------------------------------------------
+      - name: Generate coverage report
+        run: |
+          uv run --no-project --no-build \
+            CI/test_coverage.py build --filter
+
+          echo "Checking generated coverage report..."
+          test -f build/coverage/cov.xml
+
+          echo "Coverage XML:"
+          ls -lh build/coverage/cov.xml
+
+          echo "Coverage HTML:"
+          ls -lh build/coverage/html || true
+
+      # ------------------------------------------------------------
+      # 8. Save raw coverage evidence
+      #    Useful for the assignment and debugging
+      # ------------------------------------------------------------
+      - name: Upload coverage evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: sonar-coverage-evidence
+          path: |
+            build/coverage/cov.xml
+            build/coverage/html
+          retention-days: 14
+
+      # ------------------------------------------------------------
+      # 9. Send code analysis + coverage to SonarQube Cloud
+      # ------------------------------------------------------------
       - name: Run SonarQube Cloud scan
         uses: SonarSource/sonarqube-scan-action@v8.2.1
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         with:
           args: >
             --define sonar.cfamily.compile-commands=build/compile_commands.json
+            --define sonar.coverageReportPaths=build/coverage/cov.xml
             --define sonar.verbose=true
