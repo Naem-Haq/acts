@@ -95,13 +95,6 @@ jobs:
 
       # ------------------------------------------------------------
       # 7. Install pinned coverage-report dependencies
-      #
-      # ACTS's CI/test_coverage.py contains inline Python
-      # dependencies, some of which are unpinned. Running it using
-      # "uv run" caused Sonar githubactions:S8544.
-      #
-      # Instead create an isolated environment and pin all direct
-      # dependencies explicitly.
       # ------------------------------------------------------------
       - name: Install coverage report dependencies
         run: |
@@ -114,27 +107,28 @@ jobs:
             rich==15.0.0 \
             typer==0.27.2
 
-          echo "Coverage environment:"
+          echo "Checking coverage tools..."
           .coverage-venv/bin/python --version
           .coverage-venv/bin/gcovr --version
 
       # ------------------------------------------------------------
       # 8. Generate SonarQube coverage XML
-      #
-      # Run the ACTS coverage script directly using the environment
-      # above. This still produces:
-      #
-      #   build/coverage/cov.xml
-      #   build/coverage/html/
-      #
-      # The --filter option removes tests, examples, Python,
-      # documentation, Detray, Traccc, third-party code, etc.
-      # according to ACTS's own coverage configuration.
       # ------------------------------------------------------------
       - name: Generate coverage report
         run: |
-          .coverage-venv/bin/python \
-            CI/test_coverage.py build --filter
+          # Put the pinned virtual environment on PATH so that
+          # CI/test_coverage.py can locate the gcovr executable.
+          export PATH="$GITHUB_WORKSPACE/.coverage-venv/bin:$PATH"
+
+          echo "Python:"
+          which python
+          python --version
+
+          echo "gcovr:"
+          which gcovr
+          gcovr --version
+
+          python CI/test_coverage.py build --filter
 
           echo "Checking generated coverage report..."
           test -f build/coverage/cov.xml
